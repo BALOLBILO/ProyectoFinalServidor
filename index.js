@@ -1,13 +1,12 @@
 const express = require('express');
 const admin = require('firebase-admin');
-
 const app = express();
 app.use(express.json());
 
-// 🔐 Leer clave desde variable de entorno
-const serviceAccount = JSON.parse(process.env.FIREBASE_KEY_JSON);
+// 🔐 Leer la clave desde variable de entorno
+const serviceAccount = JSON.parse(process.env.FIREBASE_CONFIG);
 
-// 🔥 Inicializar Firebase
+// 🔥 Inicializar Firebase Admin
 admin.initializeApp({
   credential: admin.credential.cert(serviceAccount)
 });
