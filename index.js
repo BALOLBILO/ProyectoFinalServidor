@@ -4,7 +4,7 @@ const app = express();
 app.use(express.json());
 
 // 🔐 Leer la clave desde variable de entorno
-const serviceAccount = JSON.parse(process.env.FIREBASE_CONFIG);
+const serviceAccount = JSON.parse(process.env.GOOGLE_CREDENTIALS);
 
 // 🔥 Inicializar Firebase Admin
 admin.initializeApp({
