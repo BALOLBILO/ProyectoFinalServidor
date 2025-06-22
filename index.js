@@ -1,12 +1,13 @@
 const express = require('express');
 const admin = require('firebase-admin');
+
 const app = express();
 app.use(express.json());
 
-// 🔐 Ruta al archivo de clave privada de Firebase
-const serviceAccount = require('./clave.json');
+// 🔐 Leer clave desde variable de entorno
+const serviceAccount = JSON.parse(process.env.FIREBASE_KEY_JSON);
 
-// 🔥 Inicializar Firebase Admin
+// 🔥 Inicializar Firebase
 admin.initializeApp({
   credential: admin.credential.cert(serviceAccount)
 });
@@ -17,7 +18,7 @@ const db = admin.firestore();
 app.post('/mediciones', async (req, res) => {
   try {
     const datos = req.body;
-    datos.timestamp = new Date(); // Agrega el timestamp si no lo manda el ESP32
+    datos.timestamp = new Date(); // Agrega timestamp si no lo manda el ESP32
 
     await db.collection('mediciones').add(datos);
     res.status(200).send('Medición guardada');
@@ -28,7 +29,7 @@ app.post('/mediciones', async (req, res) => {
 });
 
 // ✅ Escuchar peticiones
-const PORT = 3000;
+const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`✅ Servidor escuchando en http://localhost:${PORT}`);
 });
