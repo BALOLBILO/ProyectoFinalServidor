@@ -1,34 +1,43 @@
-const express = require('express');
-const admin = require('firebase-admin');
+const express = require("express");
+const admin = require("firebase-admin");
+const fs = require("fs");
+
 const app = express();
 app.use(express.json());
 
-// 🔐 Leer la clave desde variable de entorno
-const serviceAccount = JSON.parse(process.env.GOOGLE_CREDENTIALS);
-
-// 🔥 Inicializar Firebase Admin
+const serviceAccount = require("./clave.json");
 admin.initializeApp({
   credential: admin.credential.cert(serviceAccount)
 });
 
 const db = admin.firestore();
 
-// 📥 Ruta POST para recibir datos del ESP32
-app.post('/mediciones', async (req, res) => {
-  try {
-    const datos = req.body;
-    datos.timestamp = new Date(); // Agrega timestamp si no lo manda el ESP32
+// NUEVO ENDPOINT PARA VARIAS MEDICIONES A LA VEZ
+app.post("/mediciones", async (req, res) => {
+  const mediciones = req.body;
 
-    await db.collection('mediciones').add(datos);
-    res.status(200).send('Medición guardada');
-  } catch (error) {
-    console.error('❌ Error:', error);
-    res.status(500).send('Error al guardar la medición');
+  if (!Array.isArray(mediciones)) {
+    return res.status(400).send("Se esperaba un array de mediciones");
+  }
+
+  try {
+    const batch = db.batch();
+    const coleccion = db.collection("mediciones");
+
+    mediciones.forEach((medicion) => {
+      const docRef = coleccion.doc();
+      batch.set(docRef, medicion);
+    });
+
+    await batch.commit();
+    res.status(200).send("✅ Mediciones guardadas correctamente");
+  } catch (err) {
+    console.error("❌ Error al guardar mediciones:", err);
+    res.status(500).send("Error interno del servidor");
   }
 });
 
-// ✅ Escuchar peticiones
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`✅ Servidor escuchando en http://localhost:${PORT}`);
+  console.log("Servidor corriendo en puerto", PORT);
 });
