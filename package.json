@@ -9,10 +9,18 @@
   "keywords": [],
   "author": "",
   "license": "ISC",
-  "description": "",
   "dependencies": {
     "dotenv": "^16.5.0",
     "express": "^5.1.0",
     "firebase-admin": "^13.4.0"
-  }
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/BALOLBILO/ProyectoFinalServidor.git"
+  },
+  "bugs": {
+    "url": "https://github.com/BALOLBILO/ProyectoFinalServidor/issues"
+  },
+  "homepage": "https://github.com/BALOLBILO/ProyectoFinalServidor#readme",
+  "description": ""
 }

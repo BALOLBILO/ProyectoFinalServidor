@@ -4,8 +4,10 @@ const admin = require("firebase-admin");
 const app = express();
 app.use(express.json());
 
-// 🚨 Lee la clave desde la variable de entorno GOOGLE_CREDENTIALS
-const serviceAccount = JSON.parse(process.env.GOOGLE_CREDENTIALS);
+// ✅ Corrige los saltos de línea en la clave privada
+const serviceAccount = JSON.parse(
+  process.env.GOOGLE_CREDENTIALS.replace(/\\n/g, '\n')
+);
 
 admin.initializeApp({
   credential: admin.credential.cert(serviceAccount),
@@ -13,10 +15,7 @@ admin.initializeApp({
 
 const db = admin.firestore();
 
-// ✅ Endpoint para recibir múltiples mediciones
 app.post("/mediciones", async (req, res) => {
-    console.log("🔎 Cuerpo recibido:", req.body); // <-- AGREGALO
-
   const mediciones = req.body;
 
   if (!Array.isArray(mediciones)) {
@@ -28,7 +27,7 @@ app.post("/mediciones", async (req, res) => {
     const coleccion = db.collection("mediciones");
 
     mediciones.forEach((medicion) => {
-      const docRef = coleccion.doc(); // ID aleatorio
+      const docRef = coleccion.doc();
       batch.set(docRef, medicion);
     });
 
@@ -40,7 +39,6 @@ app.post("/mediciones", async (req, res) => {
   }
 });
 
-// 🚀 Arranca el servidor
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log("Servidor corriendo en puerto", PORT);
