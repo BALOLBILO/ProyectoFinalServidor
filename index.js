@@ -15,6 +15,8 @@ const db = admin.firestore();
 
 // ✅ Endpoint para recibir múltiples mediciones
 app.post("/mediciones", async (req, res) => {
+    console.log("🔎 Cuerpo recibido:", req.body); // <-- AGREGALO
+
   const mediciones = req.body;
 
   if (!Array.isArray(mediciones)) {
