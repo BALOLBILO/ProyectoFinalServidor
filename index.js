@@ -1,6 +1,6 @@
 const express = require("express");
 const admin = require("firebase-admin");
-const serviceAccount = require("./clave.json");
+const serviceAccount = require("./clave.json"); // ⚠️ NO subas esto a GitHub
 
 admin.initializeApp({
   credential: admin.credential.cert(serviceAccount),
@@ -12,8 +12,8 @@ app.use(express.json());
 
 const PORT = process.env.PORT || 3000;
 
-app.listen(PORT, () => {
-  console.log(`🚀 Servidor corriendo en el puerto ${PORT}`);
+app.get("/", (req, res) => {
+  res.send("🌐 API funcionando correctamente");
 });
 
 app.post("/mediciones", async (req, res) => {
@@ -30,15 +30,19 @@ app.post("/mediciones", async (req, res) => {
     const coleccion = db.collection("mediciones");
 
     mediciones.forEach((medicion) => {
-      const docRef = coleccion.doc(); // ID aleatorio
+      const docRef = coleccion.doc();
       batch.set(docRef, medicion);
     });
 
     await batch.commit();
-    console.log("✅ Mediciones guardadas correctamente en Firestore");
+    console.log("✅ Mediciones guardadas en Firestore");
     res.status(200).send("✅ Mediciones guardadas correctamente");
   } catch (err) {
     console.error("❌ Error al guardar mediciones:", err);
     res.status(500).send("Error interno del servidor");
   }
+});
+
+app.listen(PORT, () => {
+  console.log(`🚀 Servidor escuchando en el puerto ${PORT}`);
 });
