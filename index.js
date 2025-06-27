@@ -1,18 +1,3 @@
-const express = require("express");
-const admin = require("firebase-admin");
-const fs = require("fs");
-
-const app = express();
-app.use(express.json());
-
-const serviceAccount = require("./clave.json");
-admin.initializeApp({
-  credential: admin.credential.cert(serviceAccount)
-});
-
-const db = admin.firestore();
-
-// NUEVO ENDPOINT PARA VARIAS MEDICIONES A LA VEZ
 app.post("/mediciones", async (req, res) => {
   const mediciones = req.body;
 
@@ -22,22 +7,17 @@ app.post("/mediciones", async (req, res) => {
 
   try {
     const batch = db.batch();
-    const coleccion = db.collection("mediciones");
+    const coleccion = db.collection("mediciones"); // ✅ Esta es la colección principal
 
     mediciones.forEach((medicion) => {
-      const docRef = coleccion.doc();
+      const docRef = coleccion.doc(); // crea nuevo doc con ID aleatorio
       batch.set(docRef, medicion);
     });
 
-    await batch.commit();
+    await batch.commit(); // 🔥 Esto es lo que escribe realmente
     res.status(200).send("✅ Mediciones guardadas correctamente");
   } catch (err) {
     console.error("❌ Error al guardar mediciones:", err);
     res.status(500).send("Error interno del servidor");
   }
-});
-
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log("Servidor corriendo en puerto", PORT);
 });
