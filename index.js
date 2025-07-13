@@ -28,11 +28,14 @@ app.post("/mediciones", async (req, res) => {
 
     mediciones.forEach((medicion) => {
       const docRef = coleccion.doc();
-      batch.set(docRef, medicion);
+      batch.set(docRef, {
+        ...medicion,
+        timestamp: admin.firestore.FieldValue.serverTimestamp(), // 🚀 agrega el timestamp
+      });
     });
 
     await batch.commit();
-    res.status(200).send("✅ Mediciones guardadas correctamente");
+    res.status(200).send("✅ Mediciones guardadas correctamente con timestamp");
   } catch (err) {
     console.error("❌ Error al guardar mediciones:", err);
     res.status(500).send("Error interno del servidor");
