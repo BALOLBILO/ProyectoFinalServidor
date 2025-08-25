@@ -1,5 +1,6 @@
 const express = require("express");
 const admin = require("firebase-admin");
+const geofire = require("geofire-common"); // ✅ nuevo
 
 const app = express();
 app.use(express.json());
@@ -28,14 +29,23 @@ app.post("/mediciones", async (req, res) => {
 
     mediciones.forEach((medicion) => {
       const docRef = coleccion.doc();
+
+      const lat = medicion.lat;
+      const lon = medicion.lon;
+
+      const position = new admin.firestore.GeoPoint(lat, lon);
+      const geohash = geofire.geohashForLocation([lat, lon]);
+
       batch.set(docRef, {
         ...medicion,
-        timestamp: admin.firestore.FieldValue.serverTimestamp(), // 🚀 agrega el timestamp
+        position,
+        geohash,
+        timestamp: admin.firestore.FieldValue.serverTimestamp(),
       });
     });
 
     await batch.commit();
-    res.status(200).send("✅ Mediciones guardadas correctamente con timestamp");
+    res.status(200).send("✅ Mediciones guardadas con geolocalización y timestamp");
   } catch (err) {
     console.error("❌ Error al guardar mediciones:", err);
     res.status(500).send("Error interno del servidor");
