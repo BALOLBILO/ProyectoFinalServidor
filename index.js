@@ -1,13 +1,13 @@
 const express = require("express");
 const admin = require("firebase-admin");
-const geofire = require("geofire-common"); // ✅ nuevo
+const geofire = require("geofire-common");
 
 const app = express();
 app.use(express.json());
 
-// ✅ Corrige los saltos de línea en la clave privada
+// Carga las credenciales del entorno (ya corregidas con reemplazo de saltos de línea)
 const serviceAccount = JSON.parse(
-  process.env.GOOGLE_CREDENTIALS.replace(/\\n/g, '\n')
+  process.env.GOOGLE_CREDENTIALS.replace(/\\n/g, "\n")
 );
 
 admin.initializeApp({
@@ -30,8 +30,9 @@ app.post("/mediciones", async (req, res) => {
     mediciones.forEach((medicion) => {
       const docRef = coleccion.doc();
 
-      const lat = medicion.lat;
-      const lon = medicion.lon;
+      // 👇 Usamos los nombres correctos que vienen del ESP32
+      const lat = medicion.latitud;
+      const lon = medicion.longitud;
 
       const position = new admin.firestore.GeoPoint(lat, lon);
       const geohash = geofire.geohashForLocation([lat, lon]);
