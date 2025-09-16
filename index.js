@@ -30,7 +30,6 @@ app.post("/mediciones", async (req, res) => {
     mediciones.forEach((medicion) => {
       const docRef = coleccion.doc();
 
-      // 👇 Usamos los nombres correctos que vienen del ESP32
       const lat = medicion.latitud;
       const lon = medicion.longitud;
 
@@ -41,12 +40,15 @@ app.post("/mediciones", async (req, res) => {
         ...medicion,
         position,
         geohash,
-        timestamp: admin.firestore.FieldValue.serverTimestamp(),
+        // 👇 ahora usamos el timestamp que llega desde el ESP32
+        timestamp: medicion.timestamp,
       });
     });
 
     await batch.commit();
-    res.status(200).send("✅ Mediciones guardadas con geolocalización y timestamp");
+    res
+      .status(200)
+      .send("✅ Mediciones guardadas con geolocalización y timestamp del ESP32");
   } catch (err) {
     console.error("❌ Error al guardar mediciones:", err);
     res.status(500).send("Error interno del servidor");
