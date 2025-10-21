@@ -38,8 +38,14 @@ app.post("/mediciones", async (req, res) => {
     mediciones.forEach((medicion) => {
       const docRef = coleccion.doc();
 
-      const lat = medicion.latitud;
-      const lon = medicion.longitud;
+      // 🧭 Conversión segura de lat/lon
+      const lat = parseFloat(medicion.latitud);
+      const lon = parseFloat(medicion.longitud);
+
+      if (isNaN(lat) || isNaN(lon)) {
+        console.warn("⚠️ Coordenadas inválidas:", medicion.latitud, medicion.longitud);
+        return; // salta esta medición
+      }
 
       const position = new admin.firestore.GeoPoint(lat, lon);
       const geohash = geofire.geohashForLocation([lat, lon]);
