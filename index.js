@@ -5,14 +5,22 @@ const geofire = require("geofire-common");
 const app = express();
 app.use(express.json());
 
-// Carga las credenciales del entorno (ya corregidas con reemplazo de saltos de línea)
-const serviceAccount = JSON.parse(
-  process.env.GOOGLE_CREDENTIALS.replace(/\\n/g, "\n")
-);
+// 🔧 Carga segura de credenciales (funciona con o sin \n escapados)
+const rawCreds = process.env.GOOGLE_CREDENTIALS;
+
+// Normaliza: convierte saltos reales en "\n"
+const fixedCreds = rawCreds
+  .replace(/\r\n/g, "\\n")
+  .replace(/\r/g, "\\n")
+  .replace(/\n/g, "\\n");
+
+const serviceAccount = JSON.parse(fixedCreds);
 
 admin.initializeApp({
   credential: admin.credential.cert(serviceAccount),
 });
+
+console.log("✅ Firebase inicializado correctamente con proyecto:", serviceAccount.project_id);
 
 const db = admin.firestore();
 
@@ -40,7 +48,7 @@ app.post("/mediciones", async (req, res) => {
         ...medicion,
         position,
         geohash,
-        // 👇 ahora usamos el timestamp que llega desde el ESP32
+        // 👇 usamos el timestamp que llega desde el ESP32
         timestamp: medicion.timestamp,
       });
     });
