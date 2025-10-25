@@ -1,27 +1,20 @@
 {
   "name": "servidor_proyecto_final",
   "version": "1.0.0",
+  "description": "API /mediciones para ESP32 (Render + Firestore)",
   "main": "index.js",
+  "type": "commonjs",
   "scripts": {
-    "start": "node index.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "start": "node index.js"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
+  "engines": {
+    "node": "20.x"
+  },
   "dependencies": {
-    "dotenv": "^16.5.0",
-    "express": "^5.1.0",
+    "cors": "^2.8.5",
+    "express": "^4.19.2",
     "firebase-admin": "^13.4.0",
-    "geofire-common": "^6.0.0"
-  },
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/BALOLBILO/ProyectoFinalServidor.git"
-  },
-  "bugs": {
-    "url": "https://github.com/BALOLBILO/ProyectoFinalServidor/issues"
-  },
-  "homepage": "https://github.com/BALOLBILO/ProyectoFinalServidor#readme",
-  "description": ""
+    "geofire-common": "^5.2.0",
+    "dotenv": "^16.5.0"
+  }
 }
