@@ -1,126 +1,118 @@
-const express = require("express");
-const admin = require("firebase-admin");
-const geofire = require("geofire-common");
-const cors = require("cors");
+// --- Helpers (deja num, nonEmpty y sanitizeId como ya los tienes) ---
 
-const app = express();
-app.use(cors());
-app.use(express.json({ limit: "2mb", strict: true, type: "application/json" }));
-
-// --- Credenciales ---
-const rawCreds = process.env.GOOGLE_CREDENTIALS;
-if (!rawCreds) {
-  console.error("❌ Falta GOOGLE_CREDENTIALS");
-  process.exit(1);
-}
-const fixedCreds = rawCreds.replace(/\r?\n/g, "\\n");
-const serviceAccount = JSON.parse(fixedCreds);
-
-admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
-const db = admin.firestore();
-console.log("✅ Firebase inicializado:", serviceAccount.project_id);
-
-// --- Helpers ---
-const num = (x) => {
-  const n = Number(x);
-  return Number.isFinite(n) ? n : NaN;
-};
-const nonEmpty = (s, def) => {
-  const v = (s ?? "").toString().trim();
-  return v.length ? v : def;
-};
-const sanitizeId = (s) => String(s).replace(/[\/\\#?&\s]/g, "_").slice(0, 200);
-
-async function commitInChunks(ops, chunkSize = 500) {
-  for (let i = 0; i < ops.length; i += chunkSize) {
-    const slice = ops.slice(i, i + chunkSize);
-    const batch = db.batch();
-    for (const { ref, data } of slice) batch.set(ref, data, { merge: true });
-    await batch.commit();
-  }
-}
-
-// Acepta lat/lng o latitud/longitud
+// Acepta lat/lng o latitud/longitud → devuelve {lat, lon} numéricos
 function getLatLon(med) {
-  const lat = Number.isFinite(num(med.lat)) ? num(med.lat) : num(med.latitud);
-  const lon = Number.isFinite(num(med.lng)) ? num(med.lng)
-            : Number.isFinite(num(med.lon)) ? num(med.lon)
-            : num(med.longitud);
+  const n = (x) => {
+    const v = Number(x);
+    return Number.isFinite(v) ? v : NaN;
+  };
+  const lat = Number.isFinite(n(med.lat)) ? n(med.lat) : n(med.latitud);
+  const lon = Number.isFinite(n(med.lng)) ? n(med.lng)
+           : Number.isFinite(n(med.lon)) ? n(med.lon)
+           : n(med.longitud);
   return { lat, lon };
 }
 
-// Acepta ts o timestamp; normaliza a **milisegundos** y usa fromMillis
-function getTs(med) {
-  let t = Number.isFinite(num(med.ts)) ? num(med.ts) : num(med.timestamp);
-  if (!Number.isFinite(t) || t <= 0) return admin.firestore.FieldValue.serverTimestamp();
-  const ms = t > 2_000_000_000 ? Math.round(t) : Math.round(t * 1000); // si vino en segundos → ms
-  return admin.firestore.Timestamp.fromMillis(ms);
+// Normaliza timestamp a **segundos numéricos**
+function getTimestampSeconds(med) {
+  const n = (x) => {
+    const v = Number(x);
+    return Number.isFinite(v) ? v : NaN;
+  };
+  let t = n(med.timestamp);
+  if (!Number.isFinite(t) || t <= 0) t = n(med.ts);
+  if (!Number.isFinite(t) || t <= 0) t = Math.floor(Date.now() / 1000);
+  // si vino en milisegundos, lo bajo a segundos
+  if (t > 2_000_000_000) t = Math.round(t / 1000);
+  return t;
 }
-
-// Acepta device o sensorId
-function getDevice(med) {
-  return nonEmpty(med.device, nonEmpty(med.sensorId, "esp32"));
-}
-
-// --- Salud ---
-app.get("/health", (_req, res) =>
-  res.json({ ok: true, project: serviceAccount.project_id, time: new Date().toISOString() })
-);
 
 // --- Endpoint principal ---
 app.post("/mediciones", async (req, res) => {
   const mediciones = req.body;
-  if (!Array.isArray(mediciones)) return res.status(400).json({ error: "Se esperaba un array de mediciones" });
-  if (mediciones.length === 0) return res.status(200).json({ accepted: [] });
+  if (!Array.isArray(mediciones)) {
+    return res.status(400).json({ error: "Se esperaba un array de mediciones" });
+  }
+  if (mediciones.length === 0) {
+    return res.status(200).json({ accepted: [] });
+  }
 
   try {
     const col = db.collection("mediciones");
-    const ops = [];
+    const batch = db.batch();
     const accepted = [];
     let skipped = 0;
 
     for (const med of mediciones) {
       try {
+        // coords obligatorias
         const { lat, lon } = getLatLon(med);
         if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
-          skipped++; console.warn("skip: coords inválidas", med.lat, med.lng, med.latitud, med.longitud); continue;
+          skipped++;
+          continue;
         }
-        const ts = getTs(med);
-        const device = getDevice(med);
 
-        const idArchivoOriginal = med.idArchivo && med.idArchivo.toString(); // EXACTO para que el ESP lo borre
-        const docId = idArchivoOriginal ? sanitizeId(idArchivoOriginal) : `${sanitizeId(device)}_${Date.now()}`;
+        // timestamp (segundos)
+        const tsSec = getTimestampSeconds(med);
 
-        const data = {
-          ...med, // conservo campos originales (latitud/longitud, timestamp numérico, etc.)
-          device,
-          latitud: lat,                 // también dejo nombres “largos” por compat
-          longitud: lon,
-          position: new admin.firestore.GeoPoint(lat, lon),
-          geohash: geofire.geohashForLocation([lat, lon]),
-          timestamp: ts,                // Firestore Timestamp (fromMillis o serverTimestamp)
-          docId
+        // fechaHora (string opcional)
+        const fechaHora = (med.fechaHora ?? "").toString();
+
+        // métricas (numéricas; si alguna no viene, la omitimos)
+        const toNum = (v) => {
+          const x = Number(v);
+          return Number.isFinite(x) ? x : undefined;
         };
 
-        ops.push({ ref: col.doc(docId), data });
-        accepted.push(idArchivoOriginal || docId);
+        const data = {};
+        // === WHITELIST ESTRICTA ===
+        const co      = toNum(med.co);
+        const co2     = toNum(med.co2);
+        const nh3     = toNum(med.nh3);
+        const no2     = toNum(med.no2);
+        const pm10    = toNum(med.pm10);
+        const pm25    = toNum(med.pm25);
+        const tvoc    = toNum(med.tvoc);
+
+        if (co      !== undefined) data.co = co;
+        if (co2     !== undefined) data.co2 = co2;
+        if (nh3     !== undefined) data.nh3 = nh3;
+        if (no2     !== undefined) data.no2 = no2;
+        if (pm10    !== undefined) data.pm10 = pm10;
+        if (pm25    !== undefined) data.pm25 = pm25;
+        if (tvoc    !== undefined) data.tvoc = tvoc;
+
+        // siempre incluimos estos
+        data.fechaHora = fechaHora;                       // string (si vino vacío, queda "")
+        data.latitud   = lat;                             // número
+        data.longitud  = lon;                             // número
+        data.position  = new admin.firestore.GeoPoint(lat, lon); // GeoPoint
+        data.geohash   = geofire.geohashForLocation([lat, lon]); // string
+        data.timestamp = tsSec;                           // número (segundos)
+
+        // id para doc; ACK debe devolver el original sin tocar
+        const idArchivoOriginal = med.idArchivo && med.idArchivo.toString();
+        const docId = idArchivoOriginal
+          ? sanitizeId(idArchivoOriginal)           // sólo para ID del doc
+          : `esp32_${Date.now()}`;
+
+        batch.set(col.doc(docId), data, { merge: false }); // sólo los campos whitelisted
+        accepted.push(idArchivoOriginal || docId);         // devolver EXACTO lo que vino
       } catch (e) {
-        skipped++; console.error("skip: error procesando item:", e?.message);
+        skipped++;
+        console.error("skip item:", e?.message || e);
       }
     }
 
-    if (ops.length === 0) return res.status(200).json({ accepted: [], skipped });
+    if (accepted.length === 0) {
+      return res.status(200).json({ accepted: [], skipped });
+    }
 
-    await commitInChunks(ops, 500);
-    console.log(`POST /mediciones -> accepted=${accepted.length}, skipped=${skipped}`);
+    await batch.commit();
+    console.log(`POST /mediciones => grabados=${accepted.length}, skipped=${skipped}`);
     return res.status(200).json({ accepted, skipped });
   } catch (err) {
     console.error("❌ Error /mediciones:", err?.stack || err);
     return res.status(500).json({ error: "Error interno del servidor" });
   }
 });
-
-// --- Start ---
-const PORT = process.env.PORT || 3000;
-app.set("trust proxy", true);
-app.listen(PORT, () => console.log(`🚀 Server en puerto ${PORT}`));
