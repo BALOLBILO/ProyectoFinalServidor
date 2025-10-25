@@ -1,13 +1,19 @@
+// index.js
 const express = require("express");
 const admin = require("firebase-admin");
 const geofire = require("geofire-common");
+const cors = require("cors");
 
 const app = express();
-// 🔹 subo el límite por si mandás tandas grandes
-app.use(express.json({ limit: "2mb" }));
+app.use(cors());
+app.use(express.json({ limit: "2mb" })); // por tandas grandes
 
-// 🔧 Carga segura de credenciales (como ya tenías)
+// --- Credenciales desde env (Render) ---
 const rawCreds = process.env.GOOGLE_CREDENTIALS;
+if (!rawCreds) {
+  console.error("❌ Falta GOOGLE_CREDENTIALS");
+  process.exit(1);
+}
 const fixedCreds = rawCreds
   .replace(/\r\n/g, "\\n")
   .replace(/\r/g, "\\n")
@@ -15,89 +21,92 @@ const fixedCreds = rawCreds
 const serviceAccount = JSON.parse(fixedCreds);
 
 admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
-console.log("✅ Firebase inicializado correctamente con proyecto:", serviceAccount.project_id);
 const db = admin.firestore();
+console.log("✅ Firebase inicializado:", serviceAccount.project_id);
 
-// 🔸 helper para IDs seguros
-function sanitizeId(s) {
-  return String(s).replace(/[\/\\#?&\s]/g, "_");
+// --- Helpers ---
+const sanitizeId = s => String(s).replace(/[\/\\#?&\s]/g, "_");
+const toNum = x => {
+  const n = Number(x);
+  return Number.isFinite(n) ? n : NaN;
+};
+async function commitInChunks(ops, chunkSize = 500) {
+  for (let i = 0; i < ops.length; i += chunkSize) {
+    const slice = ops.slice(i, i + chunkSize);
+    const batch = db.batch();
+    for (const { ref, data } of slice) batch.set(ref, data, { merge: true });
+    await batch.commit();
+  }
 }
 
-// 🔄 reemplazar TODO tu handler por este:
+// --- Salud ---
+app.get("/health", (_req, res) =>
+  res.json({ ok: true, project: serviceAccount.project_id, time: new Date().toISOString() })
+);
+
+// --- Endpoint principal ---
 app.post("/mediciones", async (req, res) => {
   const mediciones = req.body;
-  if (!Array.isArray(mediciones)) {
-    return res.status(400).json({ error: "Se esperaba un array de mediciones" });
-  }
-  if (mediciones.length === 0) {
-    return res.status(200).json({ accepted: [] });
-  }
+  if (!Array.isArray(mediciones)) return res.status(400).json({ error: "Se esperaba un array de mediciones" });
+  if (mediciones.length === 0) return res.status(200).json({ accepted: [] });
 
   try {
-    const coleccion = db.collection("mediciones");
+    const col = db.collection("mediciones");
+    const ops = [];
     const accepted = [];
 
-    // Firestore: máx 500 operaciones por batch
-    let batch = db.batch();
-    let pending = 0;
-
-    const commitBatch = async () => {
-      if (pending > 0) {
-        await batch.commit();
-        batch = db.batch();
-        pending = 0;
-      }
-    };
-
-    for (const medicion of mediciones) {
-      const lat = Number(medicion.latitud);
-      const lon = Number(medicion.longitud);
+    for (const med of mediciones) {
+      const lat = toNum(med.latitud);
+      const lon = toNum(med.longitud);
       if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
-        console.warn("⚠️ Coordenadas inválidas:", medicion.latitud, medicion.longitud);
-        continue;
+        console.warn("⚠️ Coordenadas inválidas:", med.latitud, med.longitud);
+        continue; // salta esta medición
       }
 
+      // Geo
       const position = new admin.firestore.GeoPoint(lat, lon);
       const geohash = geofire.geohashForLocation([lat, lon]);
 
-      const tsSec = Number(medicion.timestamp); // tu ESP manda epoch en segundos
-      const ts = Number.isFinite(tsSec) && tsSec > 0
-        ? admin.firestore.Timestamp.fromSeconds(tsSec)
-        : admin.firestore.FieldValue.serverTimestamp(); // fallback
+      // Timestamp (ESP manda epoch segundos)
+      const tsSec = toNum(med.timestamp);
+      const ts =
+        Number.isFinite(tsSec) && tsSec > 0
+          ? admin.firestore.Timestamp.fromSeconds(tsSec)
+          : admin.firestore.FieldValue.serverTimestamp(); // fallback
 
-      const sensorId  = medicion.sensorId ? String(medicion.sensorId) : "sensorX";
-      const idArchivo = medicion.idArchivo ? sanitizeId(medicion.idArchivo) : null;
-
-      // ✅ docId determinístico (idempotencia)
+      // DocID determinístico (idempotencia)
+      const sensorId = med.sensorId ? String(med.sensorId) : "sensorX";
+      const idArchivo = med.idArchivo ? sanitizeId(med.idArchivo) : null;
       const docId = idArchivo || `${sanitizeId(sensorId)}_${Number.isFinite(tsSec) ? tsSec : Date.now()}`;
-      const ref = coleccion.doc(docId);
 
-      batch.set(ref, {
-        ...medicion,
+      const ref = col.doc(docId);
+      const data = {
+        ...med,
         sensorId,
         latitud: lat,
         longitud: lon,
         position,
         geohash,
-        timestamp: ts,  // Timestamp nativo
+        timestamp: ts, // tipo Timestamp nativo
         docId,
-      }, { merge: true });
+      };
 
+      ops.push({ ref, data });
       accepted.push(idArchivo || docId);
-      pending++;
-
-      if (pending >= 500) await commitBatch();
     }
 
-    await commitBatch();
-    return res.status(200).json({ accepted }); // 🔁 el ESP borra por esto
+    if (ops.length === 0) return res.status(200).json({ accepted: [] });
+
+    await commitInChunks(ops, 500);
+    return res.status(200).json({ accepted });
   } catch (err) {
-    console.error("❌ Error al guardar mediciones:", err);
+    console.error("❌ Error al guardar mediciones:", err?.message);
+    console.error(err?.stack);
     return res.status(500).json({ error: "Error interno del servidor" });
   }
 });
 
+// --- Start ---
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log("Servidor corriendo en puerto", PORT);
-});
+app.set("trust proxy", true);
+app.listen(PORT, () => console.log(`🚀 Server en puerto ${PORT}`));
