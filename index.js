@@ -1,4 +1,3 @@
-// index.js
 const express = require("express");
 const admin = require("firebase-admin");
 const geofire = require("geofire-common");
@@ -8,7 +7,7 @@ const app = express();
 app.use(cors());
 app.use(express.json({ limit: "2mb", strict: true, type: "application/json" }));
 
-// --- Credenciales desde env (Render/Heroku) ---
+// --- Credenciales ---
 const rawCreds = process.env.GOOGLE_CREDENTIALS;
 if (!rawCreds) {
   console.error("❌ Falta GOOGLE_CREDENTIALS");
@@ -31,6 +30,7 @@ const nonEmpty = (s, def) => {
   return v.length ? v : def;
 };
 const sanitizeId = (s) => String(s).replace(/[\/\\#?&\s]/g, "_").slice(0, 200);
+
 async function commitInChunks(ops, chunkSize = 500) {
   for (let i = 0; i < ops.length; i += chunkSize) {
     const slice = ops.slice(i, i + chunkSize);
@@ -40,21 +40,24 @@ async function commitInChunks(ops, chunkSize = 500) {
   }
 }
 
-// Lee lat/lon sin importar el nombre del campo
+// Acepta lat/lng o latitud/longitud
 function getLatLon(med) {
   const lat = Number.isFinite(num(med.lat)) ? num(med.lat) : num(med.latitud);
-  const lon = Number.isFinite(num(med.lng)) ? num(med.lng) : num(med.longitud);
+  const lon = Number.isFinite(num(med.lng)) ? num(med.lng)
+            : Number.isFinite(num(med.lon)) ? num(med.lon)
+            : num(med.longitud);
   return { lat, lon };
 }
-// Lee ts en segundos o milisegundos y normaliza a Timestamp
+
+// Acepta ts o timestamp; normaliza a **milisegundos** y usa fromMillis
 function getTs(med) {
   let t = Number.isFinite(num(med.ts)) ? num(med.ts) : num(med.timestamp);
   if (!Number.isFinite(t) || t <= 0) return admin.firestore.FieldValue.serverTimestamp();
-  // si parece milisegundos, convierto a segundos
-  if (t > 2_000_000_000) t = Math.round(t / 1000);
-  return admin.firestore.Timestamp.fromSeconds(t);
+  const ms = t > 2_000_000_000 ? Math.round(t) : Math.round(t * 1000); // si vino en segundos → ms
+  return admin.firestore.Timestamp.fromMillis(ms);
 }
-// Lee id de dispositivo sin importar el campo
+
+// Acepta device o sensorId
 function getDevice(med) {
   return nonEmpty(med.device, nonEmpty(med.sensorId, "esp32"));
 }
@@ -76,46 +79,26 @@ app.post("/mediciones", async (req, res) => {
     const accepted = [];
     let skipped = 0;
 
-    // helpers locales
-    const toNum = (x) => {
-      const n = Number(x);
-      return Number.isFinite(n) ? n : NaN;
-    };
-    const readLatLon = (m) => {
-      const lat = Number.isFinite(toNum(m.lat)) ? toNum(m.lat) : toNum(m.latitud);
-      const lon = Number.isFinite(toNum(m.lng)) ? toNum(m.lng)
-                : Number.isFinite(toNum(m.lon)) ? toNum(m.lon)
-                : toNum(m.longitud);
-      return { lat, lon };
-    };
-    const readTs = (m) => {
-      let t = Number.isFinite(toNum(m.ts)) ? toNum(m.ts) : toNum(m.timestamp);
-      if (!Number.isFinite(t) || t <= 0) return null;
-      if (t > 2_000_000_000) t = Math.round(t / 1000); // ms -> s
-      return admin.firestore.Timestamp.fromSeconds(t);
-    };
-    const readDev = (m) => (m.device ?? m.sensorId ?? "esp32").toString();
-
     for (const med of mediciones) {
       try {
-        const { lat, lon } = readLatLon(med);
+        const { lat, lon } = getLatLon(med);
         if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
           skipped++; console.warn("skip: coords inválidas", med.lat, med.lng, med.latitud, med.longitud); continue;
         }
-        const ts = readTs(med) ?? admin.firestore.FieldValue.serverTimestamp();
-        const device = readDev(med);
+        const ts = getTs(med);
+        const device = getDevice(med);
 
         const idArchivoOriginal = med.idArchivo && med.idArchivo.toString(); // EXACTO para que el ESP lo borre
         const docId = idArchivoOriginal ? sanitizeId(idArchivoOriginal) : `${sanitizeId(device)}_${Date.now()}`;
 
         const data = {
-          ...med,
+          ...med, // conservo campos originales (latitud/longitud, timestamp numérico, etc.)
           device,
-          latitud: lat,   // dejo también nombres “largos” por compat
+          latitud: lat,                 // también dejo nombres “largos” por compat
           longitud: lon,
           position: new admin.firestore.GeoPoint(lat, lon),
           geohash: geofire.geohashForLocation([lat, lon]),
-          timestamp: ts,
+          timestamp: ts,                // Firestore Timestamp (fromMillis o serverTimestamp)
           docId
         };
 
@@ -129,13 +112,13 @@ app.post("/mediciones", async (req, res) => {
     if (ops.length === 0) return res.status(200).json({ accepted: [], skipped });
 
     await commitInChunks(ops, 500);
+    console.log(`POST /mediciones -> accepted=${accepted.length}, skipped=${skipped}`);
     return res.status(200).json({ accepted, skipped });
   } catch (err) {
     console.error("❌ Error /mediciones:", err?.stack || err);
     return res.status(500).json({ error: "Error interno del servidor" });
   }
 });
-
 
 // --- Start ---
 const PORT = process.env.PORT || 3000;
