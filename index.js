@@ -76,63 +76,66 @@ app.post("/mediciones", async (req, res) => {
     const accepted = [];
     let skipped = 0;
 
+    // helpers locales
+    const toNum = (x) => {
+      const n = Number(x);
+      return Number.isFinite(n) ? n : NaN;
+    };
+    const readLatLon = (m) => {
+      const lat = Number.isFinite(toNum(m.lat)) ? toNum(m.lat) : toNum(m.latitud);
+      const lon = Number.isFinite(toNum(m.lng)) ? toNum(m.lng)
+                : Number.isFinite(toNum(m.lon)) ? toNum(m.lon)
+                : toNum(m.longitud);
+      return { lat, lon };
+    };
+    const readTs = (m) => {
+      let t = Number.isFinite(toNum(m.ts)) ? toNum(m.ts) : toNum(m.timestamp);
+      if (!Number.isFinite(t) || t <= 0) return null;
+      if (t > 2_000_000_000) t = Math.round(t / 1000); // ms -> s
+      return admin.firestore.Timestamp.fromSeconds(t);
+    };
+    const readDev = (m) => (m.device ?? m.sensorId ?? "esp32").toString();
+
     for (const med of mediciones) {
       try {
-        // 1) Coordenadas
-        const { lat, lon } = getLatLon(med);
+        const { lat, lon } = readLatLon(med);
         if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
-          skipped++;
-          console.warn("⚠️ Item sin coordenadas válidas:", med.lat, med.lng, med.latitud, med.longitud);
-          continue;
+          skipped++; console.warn("skip: coords inválidas", med.lat, med.lng, med.latitud, med.longitud); continue;
         }
-        const position = new admin.firestore.GeoPoint(lat, lon);
-        const geohash = geofire.geohashForLocation([lat, lon]);
+        const ts = readTs(med) ?? admin.firestore.FieldValue.serverTimestamp();
+        const device = readDev(med);
 
-        // 2) Timestamp
-        const ts = getTs(med);
+        const idArchivoOriginal = med.idArchivo && med.idArchivo.toString(); // EXACTO para que el ESP lo borre
+        const docId = idArchivoOriginal ? sanitizeId(idArchivoOriginal) : `${sanitizeId(device)}_${Date.now()}`;
 
-        // 3) Device + docId determinístico
-        const device = getDevice(med);
-        const idArchivoOriginal = med.idArchivo && med.idArchivo.toString(); // tal cual llega (para que el ESP pueda borrar)
-        const idArchivoSanit = idArchivoOriginal ? sanitizeId(idArchivoOriginal) : null;
-        const docId = idArchivoSanit || `${sanitizeId(device)}_${Date.now()}`;
-
-        // 4) Armo data normalizada, sin romper lo que mandó el ESP
         const data = {
-          ...med,                      // conservo campos originales (fechaHora, etc.)
-          device,                      // normalizo nombre
-          latitud: lat,                // mantengo latitud/longitud por compatibilidad
+          ...med,
+          device,
+          latitud: lat,   // dejo también nombres “largos” por compat
           longitud: lon,
-          position,                    // GeoPoint
-          geohash,
-          timestamp: ts,               // Firestore Timestamp
-          docId,                       // útil para debug
+          position: new admin.firestore.GeoPoint(lat, lon),
+          geohash: geofire.geohashForLocation([lat, lon]),
+          timestamp: ts,
+          docId
         };
 
-        const ref = col.doc(docId);
-        ops.push({ ref, data });
-
-        // En 'accepted' devuelvo el nombre EXACTO del archivo si vino,
-        // para que el ESP32 lo encuentre en SPIFFS y lo borre.
+        ops.push({ ref: col.doc(docId), data });
         accepted.push(idArchivoOriginal || docId);
       } catch (e) {
-        skipped++;
-        console.error("⛔ Error procesando un item:", e?.message);
+        skipped++; console.error("skip: error procesando item:", e?.message);
       }
     }
 
-    if (ops.length === 0) {
-      return res.status(200).json({ accepted: [], skipped });
-    }
+    if (ops.length === 0) return res.status(200).json({ accepted: [], skipped });
 
     await commitInChunks(ops, 500);
     return res.status(200).json({ accepted, skipped });
   } catch (err) {
-    console.error("❌ Error al guardar mediciones:", err?.message);
-    console.error(err?.stack);
+    console.error("❌ Error /mediciones:", err?.stack || err);
     return res.status(500).json({ error: "Error interno del servidor" });
   }
 });
+
 
 // --- Start ---
 const PORT = process.env.PORT || 3000;
